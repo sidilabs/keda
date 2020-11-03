@@ -5,3 +5,8 @@ rules:
     mergeMethod: hardreset
     conflictReviewers:      # On merge conflict assign a reviewer
       - robsondepaula
+  - base: v1
+    upstream: kedacore:v1
+    mergeMethod: hardreset
+    conflictReviewers:
+      - robsondepaula
