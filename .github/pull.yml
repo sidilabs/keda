@@ -3,3 +3,5 @@ rules:
   - base: main
     upstream: kedacore:main
     mergeMethod: hardreset
+    conflictReviewers:      # On merge conflict assign a reviewer
+      - robsondepaula
