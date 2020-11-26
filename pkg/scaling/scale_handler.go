@@ -458,6 +458,8 @@ func buildScaler(triggerType string, config *scalers.ScalerConfig) (scalers.Scal
 		return scalers.NewRedisStreamsScaler(config)
 	case "stan":
 		return scalers.NewStanScaler(config)
+	case "swift":
+		return scalers.NewSwiftScaler(config)
 	default:
 		return nil, fmt.Errorf("no scaler found for type: %s", triggerType)
 	}
