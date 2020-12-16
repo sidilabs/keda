@@ -9,55 +9,54 @@ import (
 	"net/url"
 	"path"
 	"time"
-
-	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 const tokensEndpoint = "/auth/tokens"
 
-// KeystoneAuthMetadata contains all the necessary metadata for Keystone authentication
+var httpClient = &http.Client{}
+
 type KeystoneAuthMetadata struct {
-	AuthURL    string       `json:"-"`
-	AuthToken  string       `json:"-"`
-	HTTPClient *http.Client `json:"-"`
-	Properties *authProps   `json:"auth"`
+	AuthURL    string      `json:"-"`
+	AuthToken  string      `json:"-"`
+	HttpClient http.Client `json:"-"`
+	Properties *AuthProps  `json:"auth"`
 }
 
-type authProps struct {
-	Identity *identityProps `json:"identity"`
-	Scope    *scopeProps    `json:"scope,omitempty"`
+type AuthProps struct {
+	Identity *IdentityProps `json:"identity"`
+	Scope    *ScopeProps    `json:"scope,omitempty"`
 }
 
-type identityProps struct {
+type IdentityProps struct {
 	Methods       []string            `json:"methods"`
-	Password      *passwordProps      `json:"password,omitempty"`
-	AppCredential *appCredentialProps `json:"application_credential,omitempty"`
+	Password      *PasswordProps      `json:"password,omitempty"`
+	AppCredential *AppCredentialProps `json:"application_credential,omitempty"`
 }
 
-type passwordProps struct {
-	User *userProps `json:"user"`
+type PasswordProps struct {
+	User *UserProps `json:"user"`
 }
 
-type appCredentialProps struct {
+type AppCredentialProps struct {
 	ID     string `json:"id"`
 	Secret string `json:"secret"`
 }
 
-type scopeProps struct {
-	Project *projectProps `json:"project"`
+type ScopeProps struct {
+	Project *ProjectProps `json:"project"`
 }
 
-type userProps struct {
+type UserProps struct {
 	ID       string `json:"id"`
 	Password string `json:"password"`
 }
 
-type projectProps struct {
+type ProjectProps struct {
 	ID string `json:"id"`
 }
 
-// GetToken retrieves a token from Keystone
 func (authProps *KeystoneAuthMetadata) GetToken() (string, error) {
+
 	jsonBody, jsonError := json.Marshal(authProps)
 
 	if jsonError != nil {
@@ -74,37 +73,23 @@ func (authProps *KeystoneAuthMetadata) GetToken() (string, error) {
 
 	tokenURL.Path = path.Join(tokenURL.Path, tokensEndpoint)
 
-	getTokenRequest, getTokenRequestError := http.NewRequest("POST", tokenURL.String(), body)
-
-	getTokenRequest.Header.Set("Content-Type", "application/json")
-
-	if getTokenRequestError != nil {
-		return "", getTokenRequestError
-	}
-
-	resp, requestError := authProps.HTTPClient.Do(getTokenRequest)
+	resp, requestError := http.Post(tokenURL.String(), "application/json", body)
 
 	if requestError != nil {
 		return "", requestError
+	} else {
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			authProps.AuthToken = resp.Header["X-Subject-Token"][0]
+			return resp.Header["X-Subject-Token"][0], nil
+		}
+
+		errBody, _ := ioutil.ReadAll(resp.Body)
+		return "", fmt.Errorf(string(errBody))
 	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		authProps.AuthToken = resp.Header["X-Subject-Token"][0]
-		return resp.Header["X-Subject-Token"][0], nil
-	}
-
-	errBody, readBodyErr := ioutil.ReadAll(resp.Body)
-
-	if readBodyErr != nil {
-		return "", readBodyErr
-	}
-
-	return "", fmt.Errorf(string(errBody))
 }
 
-// IsTokenValid checks if a authentication token is valid
 func IsTokenValid(authProps KeystoneAuthMetadata) (bool, error) {
 	token := authProps.AuthToken
 
@@ -124,13 +109,11 @@ func IsTokenValid(authProps KeystoneAuthMetadata) (bool, error) {
 		return false, checkRequestError
 	}
 
-	checkResp, requestError := authProps.HTTPClient.Do(checkTokenRequest)
+	checkResp, requestError := authProps.HttpClient.Do(checkTokenRequest)
 
 	if requestError != nil {
 		return false, requestError
 	}
-
-	defer checkResp.Body.Close()
 
 	if checkResp.StatusCode >= 400 {
 		return false, nil
@@ -139,20 +122,19 @@ func IsTokenValid(authProps KeystoneAuthMetadata) (bool, error) {
 	return true, nil
 }
 
-// NewPasswordAuth creates a struct containing metadata for authentication using password method
 func NewPasswordAuth(authURL string, userID string, userPassword string, projectID string, httpTimeout int) (*KeystoneAuthMetadata, error) {
 	var tokenError error
 
 	passAuth := new(KeystoneAuthMetadata)
 
-	passAuth.Properties = new(authProps)
+	passAuth.Properties = new(AuthProps)
 
-	passAuth.Properties.Scope = new(scopeProps)
-	passAuth.Properties.Scope.Project = new(projectProps)
+	passAuth.Properties.Scope = new(ScopeProps)
+	passAuth.Properties.Scope.Project = new(ProjectProps)
 
-	passAuth.Properties.Identity = new(identityProps)
-	passAuth.Properties.Identity.Password = new(passwordProps)
-	passAuth.Properties.Identity.Password.User = new(userProps)
+	passAuth.Properties.Identity = new(IdentityProps)
+	passAuth.Properties.Identity.Password = new(PasswordProps)
+	passAuth.Properties.Identity.Password.User = new(UserProps)
 
 	url, err := url.Parse(authURL)
 
@@ -164,7 +146,9 @@ func NewPasswordAuth(authURL string, userID string, userPassword string, project
 
 	passAuth.AuthURL = url.String()
 
-	passAuth.HTTPClient = kedautil.CreateHTTPClient(time.Duration(httpTimeout) * time.Second)
+	passAuth.HttpClient = *httpClient
+
+	passAuth.HttpClient.Timeout = time.Duration(httpTimeout) * time.Second
 
 	passAuth.Properties.Identity.Methods = []string{"password"}
 	passAuth.Properties.Identity.Password.User.ID = userID
@@ -177,15 +161,14 @@ func NewPasswordAuth(authURL string, userID string, userPassword string, project
 	return passAuth, tokenError
 }
 
-// NewAppCredentialsAuth creates a struct containing metadata for authentication using application credentials method
 func NewAppCredentialsAuth(authURL string, id string, secret string, httpTimeout int) (*KeystoneAuthMetadata, error) {
 	var tokenError error
 
 	appAuth := new(KeystoneAuthMetadata)
 
-	appAuth.Properties = new(authProps)
+	appAuth.Properties = new(AuthProps)
 
-	appAuth.Properties.Identity = new(identityProps)
+	appAuth.Properties.Identity = new(IdentityProps)
 
 	url, err := url.Parse(authURL)
 
@@ -197,9 +180,11 @@ func NewAppCredentialsAuth(authURL string, id string, secret string, httpTimeout
 
 	appAuth.AuthURL = url.String()
 
-	appAuth.HTTPClient = kedautil.CreateHTTPClient(time.Duration(httpTimeout) * time.Second)
+	appAuth.HttpClient = *httpClient
 
-	appAuth.Properties.Identity.AppCredential = new(appCredentialProps)
+	appAuth.HttpClient.Timeout = time.Duration(httpTimeout) * time.Second
+
+	appAuth.Properties.Identity.AppCredential = new(AppCredentialProps)
 	appAuth.Properties.Identity.Methods = []string{"application_credential"}
 	appAuth.Properties.Identity.AppCredential.ID = id
 	appAuth.Properties.Identity.AppCredential.Secret = secret
