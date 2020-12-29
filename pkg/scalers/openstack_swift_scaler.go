@@ -121,7 +121,6 @@ func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
 		return 0, readError
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-
 		var objectsList = strings.Split(strings.TrimSpace(string(body)), "\n")
 
 		// If onlyFiles is set to "true", return the total amount of files (excluding empty objects/folders)
