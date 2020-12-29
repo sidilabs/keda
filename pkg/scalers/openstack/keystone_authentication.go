@@ -58,7 +58,6 @@ type projectProps struct {
 
 // GetToken retrieves a token from Keystone
 func (authProps *KeystoneAuthMetadata) GetToken() (string, error) {
-
 	jsonBody, jsonError := json.Marshal(authProps)
 
 	if jsonError != nil {
