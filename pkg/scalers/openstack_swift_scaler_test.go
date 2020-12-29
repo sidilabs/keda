@@ -98,6 +98,7 @@ func TestSwiftGetMetricSpecForScaling(t *testing.T) {
 	}
 
 	for _, testData := range testCases {
+		testData := testData
 		meta, err := parseSwiftMetadata(&ScalerConfig{ResolvedEnv: testData.resolvedEnv, TriggerMetadata: testData.metadataTestData.metadata, AuthParams: testData.authMetadataTestData.authMetadata})
 		if err != nil {
 			t.Fatal("Could not parse metadata:", err)
@@ -129,6 +130,7 @@ func TestParseSwiftMetadataForInvalidCases(t *testing.T) {
 	}
 
 	for _, testData := range testCases {
+		testData := testData
 		t.Run(testData.name, func(pt *testing.T) {
 			_, err := parseSwiftMetadata(&ScalerConfig{ResolvedEnv: testData.resolvedEnv, TriggerMetadata: testData.metadataTestData.metadata, AuthParams: testData.authMetadataTestData.authMetadata})
 			assert.NotNil(t, err)
@@ -148,6 +150,7 @@ func TestParseSwiftAuthenticationMetadataForInvalidCases(t *testing.T) {
 	}
 
 	for _, testData := range testCases {
+		testData := testData
 		t.Run(testData.name, func(pt *testing.T) {
 			_, err := parseSwiftAuthenticationMetadata(&ScalerConfig{ResolvedEnv: testData.resolvedEnv, TriggerMetadata: testData.metadataTestData.metadata, AuthParams: testData.authMetadataTestData.authMetadata})
 			assert.NotNil(t, err)

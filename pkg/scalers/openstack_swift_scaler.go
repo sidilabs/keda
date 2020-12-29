@@ -58,7 +58,7 @@ type swiftScaler struct {
 var swiftLog = logf.Log.WithName("swift_scaler")
 
 func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
-	var token string = ""
+	var token string
 	var swiftURL string = s.metadata.swiftURL
 	var containerName string = s.metadata.containerName
 
@@ -105,7 +105,7 @@ func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
 
 	swiftRequest.URL.RawQuery = query.Encode()
 
-	resp, requestError := s.authMetadata.HttpClient.Do(swiftRequest)
+	resp, requestError := s.authMetadata.HTTPClient.Do(swiftRequest)
 
 	if requestError != nil {
 		swiftLog.Error(requestError, fmt.Sprintf("error getting metrics for container '%s'. You probably specified the wrong swift URL or the URL is not reachable", containerName))
@@ -120,12 +120,9 @@ func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
 		swiftLog.Error(readError, "could not read response body from Swift API")
 		return 0, readError
 	}
-
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 
-		var objectsList []string
-
-		objectsList = strings.Split(strings.TrimSpace(string(body)), "\n")
+		var objectsList = strings.Split(strings.TrimSpace(string(body)), "\n")
 
 		// If onlyFiles is set to "true", return the total amount of files (excluding empty objects/folders)
 		if s.metadata.onlyFiles {
@@ -163,8 +160,8 @@ func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
 	}
 
 	if resp.StatusCode == 401 {
-		swiftLog.Error(nil, "the retrieved token is not a valid token. Provide the correct auth credentials so the scaler can retrive a valid access token (Unauthorized)")
-		return 0, fmt.Errorf("the retrieved token is not a valid token. Provide the correct auth credentials so the scaler can retrive a valid access token (Unauthorized)")
+		swiftLog.Error(nil, "the retrieved token is not a valid token. Provide the correct auth credentials so the scaler can retrieve a valid access token (Unauthorized)")
+		return 0, fmt.Errorf("the retrieved token is not a valid token. Provide the correct auth credentials so the scaler can retrieve a valid access token (Unauthorized)")
 	}
 
 	if resp.StatusCode == 403 {
@@ -180,8 +177,9 @@ func (s *swiftScaler) getSwiftContainerObjectCount() (int, error) {
 	return 0, fmt.Errorf(string(body))
 }
 
+// NewSwiftScaler creates a new swift scaler
 func NewSwiftScaler(config *ScalerConfig) (Scaler, error) {
-	keystoneAuth := new(openstack.KeystoneAuthMetadata)
+	var keystoneAuth *openstack.KeystoneAuthMetadata
 
 	swiftMetadata, err := parseSwiftMetadata(config)
 
@@ -201,7 +199,6 @@ func NewSwiftScaler(config *ScalerConfig) (Scaler, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error getting openstack credentials for application credentials method: %s", err)
 		}
-
 	} else {
 		// User chose the "password" authentication method
 		if authMetadata.userID != "" {
@@ -225,7 +222,6 @@ func parseSwiftMetadata(config *ScalerConfig) (*swiftMetadata, error) {
 
 	if val, ok := config.TriggerMetadata["swiftURL"]; ok {
 		meta.swiftURL = val
-
 	} else {
 		return nil, fmt.Errorf("no swiftURL given")
 	}
@@ -274,7 +270,6 @@ func parseSwiftMetadata(config *ScalerConfig) (*swiftMetadata, error) {
 			return nil, fmt.Errorf("onlyFiles parsing error: %s", conversionError.Error())
 		}
 		meta.onlyFiles = isOnlyFiles
-
 	} else {
 		meta.onlyFiles = defaultOnlyFiles
 	}
@@ -341,7 +336,6 @@ func (s *swiftScaler) IsActive(ctx context.Context) (bool, error) {
 }
 
 func (s *swiftScaler) Close() error {
-
 	return nil
 }
 
