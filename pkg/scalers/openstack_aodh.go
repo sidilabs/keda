@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path"
 	"strconv"
+	"time"
 
 	"github.com/kedacore/keda/v2/pkg/scalers/openstack"
 	kedautil "github.com/kedacore/keda/v2/pkg/util"
@@ -31,10 +32,11 @@ const (
 /* expected structure declarations */
 
 type aodhMetadata struct {
-	metricId	  	  	string
-	aggregationMethod	string
-	granulatity			float32
-	threshold         	int
+	metricsURL        string
+	metricID          string
+	aggregationMethod string
+	granularity       int
+	threshold         float64
 }
 
 type aodhAuthenticationMetadata struct {
@@ -104,24 +106,38 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 func parseAodhMetadata(triggerMetadata map[string]string) (*aodhMetadata, error) {
 	meta := aodhMetadata{}
 
-	if val, ok := triggerMetadata["retrieveType"]; ok && val != "" {
-		meta.retrieveType = val
+	if val, ok := triggerMetadata["metricsURL"]; ok && val != "" {
+		meta.metricsURL = val
 	} else {
-		return nil, fmt.Errorf("RetrieveType must have one value (id, name or severity)")
+		return nil, fmt.Errorf("No metricsURL was declared")
 	}
 
-	if val, ok := triggerMetadata["retrieveValue"]; ok && val != "" {
-		meta.retrieveValue = val
+	if val, ok := triggerMetadata["metricID"]; ok && val != "" {
+		meta.metricID = val
 	} else {
-		return nil, fmt.Errorf("RetrieveValue must have an integer value assigned to it")
+		return nil, fmt.Errorf("No metricID was declared")
+	}
+
+	if val, ok := triggerMetadata["aggregationMethod"]; ok && val != "" {
+		meta.metricID = val
+	} else {
+		return nil, fmt.Errorf("No aggregationMethod found")
+	}
+
+	if val, ok := triggerMetadata["granularity"]; ok && val != "" {
+		meta.metricID = val
+	} else {
+		return nil, fmt.Errorf("No granularity found")
 	}
 
 	if val, ok := triggerMetadata["threshold"]; ok && val != "" {
-		_threshold, err := strconv.Atoi(val)
+		// converts the string to float64 but its value is convertible to float32 without changing
+		_threshold, err := strconv.ParseFloat(val, 32)
 		if err != nil {
 			aodhLog.Error(err, "Error parsing AODH metadata", "threshold", "threshold")
 			return nil, fmt.Errorf("Error parsing AODH metadata : %s", err.Error())
 		}
+
 		meta.threshold = _threshold
 	}
 
@@ -213,11 +229,10 @@ func (a *aodhScaler) Close() error {
 }
 
 // Gets measureament from API as float64, converts it to int and return the value.
-func (a *aodhScaler) getAlarmsMetric() (int, error) {
+func (a *aodhScaler) getAlarmsMetric() (float64, error) {
 
 	var token string = ""
-	var metricUrl string = a.authMetadata.AuthURL
-	var measureUrl := a.
+	var metricURL string = a.metadata.metricsURL
 
 	isValid, validationError := openstack.IsTokenValid(*a.authMetadata)
 
@@ -238,23 +253,37 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 
 	token = a.authMetadata.AuthToken
 
-	aodhAlarmURL, err := url.Parse(measureUrl)
+	aodhAlarmURL, err := url.Parse(metricURL)
 
 	if err != nil {
 		aodhLog.Error(err, "The metrics URL provided is invalid")
 		return defaultValueWhenError, fmt.Errorf("The metrics URL is invalid: %s", err.Error())
 	}
 
-	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.retrieveValue)
+	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID)
+	queryParameter := aodhAlarmURL.Query()
+	granularity := "2"
+	if a.metadata.granularity > 1 {
+		granularity = strconv.Itoa(a.metadata.granularity)
+	}
+	queryParameter.Set("granularity", granularity)
+	queryParameter.Set("aggregation", a.metadata.aggregationMethod)
 
-	aodhRequest, _ := http.NewRequest("GET", aodhAlarmURL.String(), nil)
+	currTimeWithWindow := time.Now().Add(time.Minute + time.Duration(a.metadata.granularity-1)).Format(time.RFC3339)
+	queryParameter.Set("start", string(currTimeWithWindow)[:17]+"00")
+
+	aodhAlarmURL.RawQuery = queryParameter.Encode()
+
+	aodhRequest, newReqErr := http.NewRequest("GET", aodhAlarmURL.String(), nil)
+	if newReqErr != nil {
+		aodhLog.Error(newReqErr, "Could not build metrics request", nil)
+	}
 	aodhRequest.Header.Set("X-Auth-Token", token)
-	currTimeWithWindow := string(time.Now().Add(time.Minute * 4).Format(time.RFC3339))[:17] + "00"
 
 	resp, requestError := a.authMetadata.HttpClient.Do(aodhRequest)
 
 	if requestError != nil {
-		aodhLog.Error(requestError, "Unable to request alarms from URL: %s.", measureUrl)
+		aodhLog.Error(requestError, "Unable to request Metrics from URL: %s.", a.metadata.metricsURL)
 		return defaultValueWhenError, requestError
 	}
 
@@ -265,7 +294,7 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 		bodyError, readError := ioutil.ReadAll(resp.Body)
 
 		if readError != nil {
-			aodhLog.Error(readError, "Request failed with code: %s for URL: %s", resp.StatusCode, a.authMetadata.AuthURL)
+			aodhLog.Error(readError, "Request failed with code: %s for URL: %s", resp.StatusCode, a.metadata.metricsURL)
 			return defaultValueWhenError, readError
 		}
 
@@ -275,13 +304,13 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 	m := measureResult{}
 	body, errConvertJSON := ioutil.ReadAll(resp.Body)
 
-	if body == nil {
-		return defaultValueWhenError, nil
-	}
-
 	if errConvertJSON != nil {
 		aodhLog.Error(errConvertJSON, "Failed to convert Body format response to json")
 		return defaultValueWhenError, err
+	}
+
+	if body == nil {
+		return defaultValueWhenError, nil
 	}
 
 	errUnMarshall := json.Unmarshal([]byte(body), &m.measures)
@@ -291,10 +320,22 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 		return defaultValueWhenError, errUnMarshall
 	}
 
-	if len(m.measures[0]) != 3 {
-		aodhLog.Error(fmt.Errorf("Unexpected json response"), "Unexpected json tuple, expected structure is [string, flaot, float].")
-		return 0, fmt.Errorf("Unexpected json response")
+	var targetMeasure []interface{} = nil
+
+	if len(m.measures) > 1 {
+		targetMeasure = m.measures[len(m.measures)-1]
 	}
 
-	return 0, fmt.Errorf("Couldn't read state for alarm with id: %s", a.metadata.retrieveValue)
+	if len(targetMeasure) != 3 {
+		aodhLog.Error(fmt.Errorf("Unexpected json response"), "Unexpected json tuple, expected structure is [string, float, float].")
+		return defaultValueWhenError, fmt.Errorf("Unexpected json response")
+	}
+
+	if val, ok := targetMeasure[2].(float64); ok {
+		return val, nil
+	}
+
+	aodhLog.Error(fmt.Errorf("Failed to convert interface type to flaot64"), "Unable to convert targetMeasure to expected format float64")
+	return defaultValueWhenError, fmt.Errorf("Failed to convert interface type to flaot64")
+
 }
