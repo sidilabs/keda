@@ -22,18 +22,19 @@ import (
 
 const (
 	defautAodhThreholdAlarmQty = 1
-
-	aodhInsufficientDataState = "insufficient data"
-	aodhOKState               = "ok"
-	aodhAlarmState            = "alarm"
+	defaultValueWhenError      = 0
+	aodhInsufficientDataState  = "insufficient data"
+	aodhOKState                = "ok"
+	aodhAlarmState             = "alarm"
 )
 
 /* expected structure declarations */
 
 type aodhMetadata struct {
-	retrieveType  string
-	retrieveValue string
-	threshold     int
+	metricId	  	  	string
+	aggregationMethod	string
+	granulatity			float32
+	threshold         	int
 }
 
 type aodhAuthenticationMetadata struct {
@@ -47,6 +48,10 @@ type aodhAuthenticationMetadata struct {
 type aodhScaler struct {
 	metadata     *aodhMetadata
 	authMetadata *openstack.OpenStackAuthMetadata
+}
+
+type measureResult struct {
+	measures [][]interface{}
 }
 
 /*  end of declarations */
@@ -207,15 +212,18 @@ func (a *aodhScaler) Close() error {
 	return nil
 }
 
+// Gets measureament from API as float64, converts it to int and return the value.
 func (a *aodhScaler) getAlarmsMetric() (int, error) {
 
 	var token string = ""
-	var aodhURL string = a.authMetadata.AuthURL
+	var metricUrl string = a.authMetadata.AuthURL
+	var measureUrl := a.
 
 	isValid, validationError := openstack.IsTokenValid(*a.authMetadata)
 
 	if validationError != nil {
-		return -1, validationError
+		aodhLog.Error(validationError, "Unable to check token validity.")
+		return 0, validationError
 	}
 
 	if !isValid {
@@ -223,28 +231,31 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 		token, tokenRequestError = a.authMetadata.GetToken()
 		a.authMetadata.AuthToken = token
 		if tokenRequestError != nil {
-			return -1, tokenRequestError
+			aodhLog.Error(tokenRequestError, "The token being used is invalid")
+			return defaultValueWhenError, tokenRequestError
 		}
 	}
 
 	token = a.authMetadata.AuthToken
 
-	aodhAlarmURL, err := url.Parse(aodhURL)
+	aodhAlarmURL, err := url.Parse(measureUrl)
 
 	if err != nil {
-		return -1, fmt.Errorf("the aodhURL is invalid: %s", err.Error())
+		aodhLog.Error(err, "The metrics URL provided is invalid")
+		return defaultValueWhenError, fmt.Errorf("The metrics URL is invalid: %s", err.Error())
 	}
 
 	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.retrieveValue)
 
 	aodhRequest, _ := http.NewRequest("GET", aodhAlarmURL.String(), nil)
 	aodhRequest.Header.Set("X-Auth-Token", token)
+	currTimeWithWindow := string(time.Now().Add(time.Minute * 4).Format(time.RFC3339))[:17] + "00"
 
 	resp, requestError := a.authMetadata.HttpClient.Do(aodhRequest)
 
 	if requestError != nil {
-		aodhLog.Error(requestError, "Unable to request alarms from URL: %s.", aodhURL)
-		return -1, requestError
+		aodhLog.Error(requestError, "Unable to request alarms from URL: %s.", measureUrl)
+		return defaultValueWhenError, requestError
 	}
 
 	defer resp.Body.Close()
@@ -255,57 +266,35 @@ func (a *aodhScaler) getAlarmsMetric() (int, error) {
 
 		if readError != nil {
 			aodhLog.Error(readError, "Request failed with code: %s for URL: %s", resp.StatusCode, a.authMetadata.AuthURL)
-			return -1, readError
+			return defaultValueWhenError, readError
 		}
 
-		return -1, fmt.Errorf(string(bodyError))
+		return defaultValueWhenError, fmt.Errorf(string(bodyError))
 	}
 
-	m := map[string]string{}
+	m := measureResult{}
 	body, errConvertJSON := ioutil.ReadAll(resp.Body)
 
 	if body == nil {
-		return -1, nil
+		return defaultValueWhenError, nil
 	}
 
 	if errConvertJSON != nil {
 		aodhLog.Error(errConvertJSON, "Failed to convert Body format response to json")
-		return -1, err
+		return defaultValueWhenError, err
 	}
 
-	errUnMarshall := json.Unmarshal([]byte(body), &m)
+	errUnMarshall := json.Unmarshal([]byte(body), &m.measures)
 
 	if errUnMarshall != nil {
-		aodhLog.Error(errUnMarshall, "Body response failed on parse")
-		return -1, errUnMarshall
+		aodhLog.Error(errUnMarshall, "Failed converting json format Body structure.")
+		return defaultValueWhenError, errUnMarshall
 	}
 
-	if val, ok := m["enabled"]; ok && val != "" {
-		isEnabled, errEnabled := strconv.ParseBool(val)
-
-		if errEnabled != nil {
-			aodhLog.Error(errEnabled, "Error parsing 'enabled' field from response for alarm with id: %s", a.metadata.retrieveValue)
-		}
-
-		if isEnabled {
-			aodhLog.Error(nil, "Current Alarm with Id %s is disabled", a.metadata.retrieveValue)
-			return -1, fmt.Errorf("Alarm with Id %s is disabled", a.metadata.retrieveValue)
-		}
-	} else {
-		aodhLog.Error(nil, "Couldn't check if alarm with Id %s is enabled", a.metadata.retrieveValue)
-		return -1, fmt.Errorf("Couldn't check if alarm with Id %s is enabled", a.metadata.retrieveValue)
+	if len(m.measures[0]) != 3 {
+		aodhLog.Error(fmt.Errorf("Unexpected json response"), "Unexpected json tuple, expected structure is [string, flaot, float].")
+		return 0, fmt.Errorf("Unexpected json response")
 	}
 
-	if val, ok := m["state"]; ok && val != "" {
-		if val == aodhInsufficientDataState || val == aodhOKState {
-			return 0, nil
-		} else if val == aodhAlarmState {
-			return 1, nil
-		} else {
-			return -1, fmt.Errorf("Unknown Alarm State detected")
-		}
-	}
-
-	return -1, fmt.Errorf("Couldn't read state for alarm with id: %s", a.metadata.retrieveValue)
-
+	return 0, fmt.Errorf("Couldn't read state for alarm with id: %s", a.metadata.retrieveValue)
 }
