@@ -9,18 +9,18 @@ import (
 	"net/url"
 	"path"
 	"time"
+
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 const tokensEndpoint = "/auth/tokens"
 
-var httpClient = &http.Client{}
-
 // KeystoneAuthMetadata contains all the necessary metadata for Keystone authentication
 type KeystoneAuthMetadata struct {
-	AuthURL    string      `json:"-"`
-	AuthToken  string      `json:"-"`
-	HTTPClient http.Client `json:"-"`
-	Properties *authProps  `json:"auth"`
+	AuthURL    string       `json:"-"`
+	AuthToken  string       `json:"-"`
+	HTTPClient *http.Client `json:"-"`
+	Properties *authProps   `json:"auth"`
 }
 
 type authProps struct {
@@ -74,11 +74,20 @@ func (authProps *KeystoneAuthMetadata) GetToken() (string, error) {
 
 	tokenURL.Path = path.Join(tokenURL.Path, tokensEndpoint)
 
-	resp, requestError := http.Post(tokenURL.String(), "application/json", body)
+	getTokenRequest, getTokenRequestError := http.NewRequest("POST", tokenURL.String(), body)
+
+	getTokenRequest.Header.Set("Content-Type", "application/json")
+
+	if getTokenRequestError != nil {
+		return "", getTokenRequestError
+	}
+
+	resp, requestError := authProps.HTTPClient.Do(getTokenRequest)
 
 	if requestError != nil {
 		return "", requestError
 	}
+
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -151,9 +160,7 @@ func NewPasswordAuth(authURL string, userID string, userPassword string, project
 
 	passAuth.AuthURL = url.String()
 
-	passAuth.HTTPClient = *httpClient
-
-	passAuth.HTTPClient.Timeout = time.Duration(httpTimeout) * time.Second
+	passAuth.HTTPClient = kedautil.CreateHTTPClient(time.Duration(httpTimeout) * time.Second)
 
 	passAuth.Properties.Identity.Methods = []string{"password"}
 	passAuth.Properties.Identity.Password.User.ID = userID
@@ -186,9 +193,7 @@ func NewAppCredentialsAuth(authURL string, id string, secret string, httpTimeout
 
 	appAuth.AuthURL = url.String()
 
-	appAuth.HTTPClient = *httpClient
-
-	appAuth.HTTPClient.Timeout = time.Duration(httpTimeout) * time.Second
+	appAuth.HTTPClient = kedautil.CreateHTTPClient(time.Duration(httpTimeout) * time.Second)
 
 	appAuth.Properties.Identity.AppCredential = new(appCredentialProps)
 	appAuth.Properties.Identity.Methods = []string{"application_credential"}
