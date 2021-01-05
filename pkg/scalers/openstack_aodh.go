@@ -260,7 +260,7 @@ func (a *aodhScaler) getAlarmsMetric() (float64, error) {
 		return defaultValueWhenError, fmt.Errorf("The metrics URL is invalid: %s", err.Error())
 	}
 
-	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID)
+	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID+"/measures")
 	queryParameter := aodhAlarmURL.Query()
 	granularity := "2"
 	if a.metadata.granularity > 1 {
