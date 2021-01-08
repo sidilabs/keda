@@ -95,7 +95,11 @@ func (authProps *KeystoneAuthMetadata) GetToken() (string, error) {
 		return resp.Header["X-Subject-Token"][0], nil
 	}
 
-	errBody, _ := ioutil.ReadAll(resp.Body)
+	errBody, readBodyErr := ioutil.ReadAll(resp.Body)
+
+	if readBodyErr != nil {
+		return "", readBodyErr
+	}
 
 	return "", fmt.Errorf(string(errBody))
 }
