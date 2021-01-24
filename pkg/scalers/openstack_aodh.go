@@ -262,14 +262,15 @@ func (a *aodhScaler) getAlarmsMetric() (float64, error) {
 
 	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID+"/measures")
 	queryParameter := aodhAlarmURL.Query()
-	granularity := "2"
+	granularity := 2
 	if a.metadata.granularity > 1 {
-		granularity = strconv.Itoa(a.metadata.granularity)
+		granularity = a.metadata.granularity - 1
 	}
-	queryParameter.Set("granularity", granularity)
+
+	queryParameter.Set("granularity", strconv.Itoa(a.metadata.granularity))
 	queryParameter.Set("aggregation", a.metadata.aggregationMethod)
 
-	currTimeWithWindow := time.Now().Add(time.Minute + time.Duration(a.metadata.granularity-1)).Format(time.RFC3339)
+	currTimeWithWindow := time.Now().Add(time.Minute + time.Duration(granularity)).Format(time.RFC3339)
 	queryParameter.Set("start", string(currTimeWithWindow)[:17]+"00")
 
 	aodhAlarmURL.RawQuery = queryParameter.Encode()
