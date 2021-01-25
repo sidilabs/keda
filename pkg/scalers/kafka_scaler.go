@@ -91,28 +91,30 @@ func NewKafkaScaler(config *ScalerConfig) (Scaler, error) {
 
 func parseKafkaMetadata(config *ScalerConfig) (kafkaMetadata, error) {
 	meta := kafkaMetadata{}
-
-	if config.TriggerMetadata["bootstrapServersFromEnv"] != "" {
+	switch {
+	case config.TriggerMetadata["bootstrapServersFromEnv"] != "":
 		meta.bootstrapServers = strings.Split(config.ResolvedEnv[config.TriggerMetadata["bootstrapServersFromEnv"]], ",")
-	} else if config.TriggerMetadata["bootstrapServers"] != "" {
+	case config.TriggerMetadata["bootstrapServers"] != "":
 		meta.bootstrapServers = strings.Split(config.TriggerMetadata["bootstrapServers"], ",")
-	} else {
+	default:
 		return meta, errors.New("no bootstrapServers given")
 	}
 
-	if config.TriggerMetadata["consumerGroupFromEnv"] != "" {
+	switch {
+	case config.TriggerMetadata["consumerGroupFromEnv"] != "":
 		meta.group = config.ResolvedEnv[config.TriggerMetadata["consumerGroupFromEnv"]]
-	} else if config.TriggerMetadata["consumerGroup"] != "" {
+	case config.TriggerMetadata["consumerGroup"] != "":
 		meta.group = config.TriggerMetadata["consumerGroup"]
-	} else {
+	default:
 		return meta, errors.New("no consumer group given")
 	}
 
-	if config.TriggerMetadata["topicFromEnv"] != "" {
+	switch {
+	case config.TriggerMetadata["topicFromEnv"] != "":
 		meta.topic = config.ResolvedEnv[config.TriggerMetadata["topicFromEnv"]]
-	} else if config.TriggerMetadata["topic"] != "" {
+	case config.TriggerMetadata["topic"] != "":
 		meta.topic = config.TriggerMetadata["topic"]
-	} else {
+	default:
 		return meta, errors.New("no topic given")
 	}
 
@@ -296,20 +298,19 @@ func (s *kafkaScaler) getLagForPartition(partition int32, offsets *sarama.Offset
 		return 0, fmt.Errorf("error finding offset block for topic %s and partition %d", s.metadata.topic, partition)
 	}
 	consumerOffset := block.Offset
+	if consumerOffset == invalidOffset && s.metadata.offsetResetPolicy == latest {
+		kafkaLog.V(0).Info(fmt.Sprintf("invalid offset found for topic %s in group %s and partition %d, probably no offset is committed yet", s.metadata.topic, s.metadata.group, partition))
+		return invalidOffset, fmt.Errorf("invalid offset found for topic %s in group %s and partition %d, probably no offset is committed yet", s.metadata.topic, s.metadata.group, partition)
+	}
 	latestOffset, err := s.client.GetOffset(s.metadata.topic, partition, sarama.OffsetNewest)
 	if err != nil {
 		kafkaLog.Error(err, fmt.Sprintf("error finding latest offset for topic %s and partition %d\n", s.metadata.topic, partition))
 		return 0, fmt.Errorf("error finding latest offset for topic %s and partition %d", s.metadata.topic, partition)
 	}
-
-	if consumerOffset == invalidOffset {
-		if s.metadata.offsetResetPolicy == latest {
-			kafkaLog.V(0).Info(fmt.Sprintf("invalid offset found for topic %s in group %s and partition %d, probably no offset is committed yet", s.metadata.topic, s.metadata.group, partition))
-			return invalidOffset, fmt.Errorf("invalid offset found for topic %s in group %s and partition %d, probably no offset is committed yet", s.metadata.topic, s.metadata.group, partition)
-		}
+	if consumerOffset == invalidOffset && s.metadata.offsetResetPolicy == earliest {
 		return latestOffset, nil
 	}
-	return (latestOffset - consumerOffset), nil
+	return latestOffset - consumerOffset, nil
 }
 
 // Close closes the kafka admin and client
@@ -338,7 +339,7 @@ func (s *kafkaScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	return []v2beta2.MetricSpec{metricSpec}
 }
 
-//GetMetrics returns value for a supported metric and an error if there is a problem getting the metric
+// GetMetrics returns value for a supported metric and an error if there is a problem getting the metric
 func (s *kafkaScaler) GetMetrics(ctx context.Context, metricName string, metricSelector labels.Selector) ([]external_metrics.ExternalMetricValue, error) {
 	partitions, err := s.getPartitions()
 	if err != nil {

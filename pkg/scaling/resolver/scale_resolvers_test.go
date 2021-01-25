@@ -15,6 +15,7 @@ import (
 
 var (
 	namespace                 = "test-namespace"
+	clusterNamespace          = "keda"
 	triggerAuthenticationName = "triggerauth"
 	secretName                = "supersecret"
 	secretKey                 = "mysecretkey"
@@ -141,8 +142,12 @@ func TestResolveNonExistingConfigMapsOrSecretsEnv(t *testing.T) {
 }
 
 func TestResolveAuthRef(t *testing.T) {
-	corev1.AddToScheme(scheme.Scheme)
-	kedav1alpha1.AddToScheme(scheme.Scheme)
+	if err := corev1.AddToScheme(scheme.Scheme); err != nil {
+		t.Errorf("Expected Error because: %v", err)
+	}
+	if err := kedav1alpha1.AddToScheme(scheme.Scheme); err != nil {
+		t.Errorf("Expected Error because: %v", err)
+	}
 	tests := []struct {
 		name                string
 		existing            []runtime.Object
@@ -219,10 +224,94 @@ func TestResolveAuthRef(t *testing.T) {
 			expected:            map[string]string{"host": secretData},
 			expectedPodIdentity: kedav1alpha1.PodIdentityProviderNone,
 		},
+		{
+			name: "clustertriggerauth exists, podidentity nil",
+			existing: []runtime.Object{
+				&kedav1alpha1.ClusterTriggerAuthentication{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: triggerAuthenticationName,
+					},
+					Spec: kedav1alpha1.TriggerAuthenticationSpec{
+						SecretTargetRef: []kedav1alpha1.AuthSecretTargetRef{
+							{
+								Parameter: "host",
+								Name:      secretName,
+								Key:       secretKey,
+							},
+						},
+					},
+				},
+			},
+			soar:     &kedav1alpha1.ScaledObjectAuthRef{Name: triggerAuthenticationName, Kind: "ClusterTriggerAuthentication"},
+			expected: map[string]string{"host": ""},
+		},
+		{
+			name: "clustertriggerauth exists and secret",
+			existing: []runtime.Object{
+				&kedav1alpha1.ClusterTriggerAuthentication{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: triggerAuthenticationName,
+					},
+					Spec: kedav1alpha1.TriggerAuthenticationSpec{
+						PodIdentity: &kedav1alpha1.AuthPodIdentity{
+							Provider: kedav1alpha1.PodIdentityProviderNone,
+						},
+						SecretTargetRef: []kedav1alpha1.AuthSecretTargetRef{
+							{
+								Parameter: "host",
+								Name:      secretName,
+								Key:       secretKey,
+							},
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: clusterNamespace,
+						Name:      secretName,
+					},
+					Data: map[string][]byte{secretKey: []byte(secretData)}},
+			},
+			soar:                &kedav1alpha1.ScaledObjectAuthRef{Name: triggerAuthenticationName, Kind: "ClusterTriggerAuthentication"},
+			expected:            map[string]string{"host": secretData},
+			expectedPodIdentity: kedav1alpha1.PodIdentityProviderNone,
+		},
+		{
+			name: "clustertriggerauth exists and secret in the wrong namespace",
+			existing: []runtime.Object{
+				&kedav1alpha1.ClusterTriggerAuthentication{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: triggerAuthenticationName,
+					},
+					Spec: kedav1alpha1.TriggerAuthenticationSpec{
+						PodIdentity: &kedav1alpha1.AuthPodIdentity{
+							Provider: kedav1alpha1.PodIdentityProviderNone,
+						},
+						SecretTargetRef: []kedav1alpha1.AuthSecretTargetRef{
+							{
+								Parameter: "host",
+								Name:      secretName,
+								Key:       secretKey,
+							},
+						},
+					},
+				},
+				&corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: namespace,
+						Name:      secretName,
+					},
+					Data: map[string][]byte{secretKey: []byte(secretData)}},
+			},
+			soar:                &kedav1alpha1.ScaledObjectAuthRef{Name: triggerAuthenticationName, Kind: "ClusterTriggerAuthentication"},
+			expected:            map[string]string{"host": ""},
+			expectedPodIdentity: kedav1alpha1.PodIdentityProviderNone,
+		},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
+			clusterObjectNamespaceCache = &clusterNamespace // Inject test cluster namespace.
 			gotMap, gotPodIdentity := ResolveAuthRef(fake.NewFakeClientWithScheme(scheme.Scheme, test.existing...), logf.Log.WithName("test"), test.soar, test.podSpec, namespace)
 			if diff := cmp.Diff(gotMap, test.expected); diff != "" {
 				t.Errorf("Returned authParams are different: %s", diff)

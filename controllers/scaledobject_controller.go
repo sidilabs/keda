@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2beta2 "k8s.io/api/autoscaling/v2beta2"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -36,6 +38,7 @@ import (
 // +kubebuilder:rbac:groups="",resources=pods;services;services;secrets;external,verbs=get;list;watch
 // +kubebuilder:rbac:groups="*",resources="*/scale",verbs="*"
 // +kubebuilder:rbac:groups="*",resources="*",verbs=get
+// +kubebuilder:rbac:groups="apps",resources=deployments;statefulsets,verbs=list;watch
 
 // ScaledObjectReconciler reconciles a ScaledObject object
 type ScaledObjectReconciler struct {
@@ -48,11 +51,25 @@ type ScaledObjectReconciler struct {
 	scaledObjectsGenerations *sync.Map
 	scaleHandler             scaling.ScaleHandler
 	kubeVersion              kedautil.K8sVersion
+
+	globalHTTPTimeout time.Duration
+}
+
+// A cache mapping "resource.group" to true or false if we know if this resource is scalable.
+var isScalableCache map[string]bool
+
+func init() {
+	// Prefill the cache with some known values for core resources in case of future parallelism to avoid stampeding herd on startup.
+	isScalableCache = map[string]bool{
+		"deployments.apps": true,
+		"statefusets.apps": true,
+	}
 }
 
 // SetupWithManager initializes the ScaledObjectReconciler instance and starts a new controller managed by the passed Manager instance.
 func (r *ScaledObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// create Discovery clientset
+	// TODO If we need to increase the QPS of scaling API calls, copy and tweak this RESTConfig.
 	clientset, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
 	if err != nil {
 		r.Log.Error(err, "Not able to create Discovery clientset")
@@ -75,7 +92,7 @@ func (r *ScaledObjectReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Init the rest of ScaledObjectReconciler
 	r.restMapper = mgr.GetRESTMapper()
 	r.scaledObjectsGenerations = &sync.Map{}
-	r.scaleHandler = scaling.NewScaleHandler(mgr.GetClient(), r.scaleClient, mgr.GetScheme())
+	r.scaleHandler = scaling.NewScaleHandler(mgr.GetClient(), r.scaleClient, mgr.GetScheme(), r.globalHTTPTimeout)
 
 	// Start controller
 	return ctrl.NewControllerManagedBy(mgr).
@@ -131,7 +148,9 @@ func (r *ScaledObjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	// ensure Status Conditions are initialized
 	if !scaledObject.Status.Conditions.AreInitialized() {
 		conditions := kedav1alpha1.GetInitializedConditions()
-		kedacontrollerutil.SetStatusConditions(r.Client, reqLogger, scaledObject, conditions)
+		if err := kedacontrollerutil.SetStatusConditions(r.Client, reqLogger, scaledObject, conditions); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// reconcile ScaledObject and set status appropriately
@@ -145,7 +164,9 @@ func (r *ScaledObjectReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		reqLogger.V(1).Info(msg)
 		conditions.SetReadyCondition(metav1.ConditionTrue, "ScaledObjectReady", msg)
 	}
-	kedacontrollerutil.SetStatusConditions(r.Client, reqLogger, scaledObject, &conditions)
+	if err := kedacontrollerutil.SetStatusConditions(r.Client, reqLogger, scaledObject, &conditions); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, err
 }
 
@@ -167,6 +188,11 @@ func (r *ScaledObjectReconciler) reconcileScaledObject(logger logr.Logger, scale
 	gvkr, err := r.checkTargetResourceIsScalable(logger, scaledObject)
 	if err != nil {
 		return "ScaledObject doesn't have correct scaleTargetRef specification", err
+	}
+
+	err = r.validateMetricNameUniqueness(logger, scaledObject)
+	if err != nil {
+		return "Error checking metric name uniqueness", err
 	}
 
 	// Create a new HPA or update existing one according to ScaledObject
@@ -214,6 +240,34 @@ func (r *ScaledObjectReconciler) ensureScaledObjectLabel(logger logr.Logger, sca
 	return r.Client.Update(context.TODO(), scaledObject)
 }
 
+func (r *ScaledObjectReconciler) validateMetricNameUniqueness(logger logr.Logger, scaledObject *kedav1alpha1.ScaledObject) error {
+	scalers, err := r.scaleHandler.GetScalers(scaledObject)
+	if err != nil {
+		logger.Error(err, "Unable to fetch scalers in metric name uniqueness check")
+		return err
+	}
+
+	observedMetricNames := make(map[string]struct{})
+	for _, scaler := range scalers {
+		for _, metric := range scaler.GetMetricSpecForScaling() {
+			// Only validate external metricNames
+			if metric.External == nil {
+				continue
+			}
+
+			metricName := metric.External.Metric.Name
+			if _, ok := observedMetricNames[metricName]; ok {
+				return fmt.Errorf("metricName %s defined multiple times in ScaledObject %s, please refer the documentation how to define metircName manually", metricName, scaledObject.Name)
+			}
+
+			observedMetricNames[metricName] = struct{}{}
+		}
+	}
+
+	logger.V(1).Info("All metric names are unique in ScaledObject", "value", scaledObject.Name)
+	return nil
+}
+
 // checkTargetResourceIsScalable checks if resource targeted for scaling exists and exposes /scale subresource
 func (r *ScaledObjectReconciler) checkTargetResourceIsScalable(logger logr.Logger, scaledObject *kedav1alpha1.ScaledObject) (kedav1alpha1.GroupVersionKindResource, error) {
 	gvkr, err := kedautil.ParseGVKR(r.restMapper, scaledObject.Spec.ScaleTargetRef.APIVersion, scaledObject.Spec.ScaleTargetRef.Kind)
@@ -224,26 +278,38 @@ func (r *ScaledObjectReconciler) checkTargetResourceIsScalable(logger logr.Logge
 	gvkString := gvkr.GVKString()
 	logger.V(1).Info("Parsed Group, Version, Kind, Resource", "GVK", gvkString, "Resource", gvkr.Resource)
 
-	// let's try to detect /scale subresource
-	scale, errScale := (*r.scaleClient).Scales(scaledObject.Namespace).Get(context.TODO(), gvkr.GroupResource(), scaledObject.Spec.ScaleTargetRef.Name, metav1.GetOptions{})
-	if errScale != nil {
-		// not able to get /scale subresource -> let's check if the resource even exist in the cluster
-		unstruct := &unstructured.Unstructured{}
-		unstruct.SetGroupVersionKind(gvkr.GroupVersionKind())
-		if err := r.Client.Get(context.TODO(), client.ObjectKey{Namespace: scaledObject.Namespace, Name: scaledObject.Spec.ScaleTargetRef.Name}, unstruct); err != nil {
-			// resource doesn't exist
-			logger.Error(err, "Target resource doesn't exist", "resource", gvkString, "name", scaledObject.Spec.ScaleTargetRef.Name)
-			return gvkr, err
+	// do we need the scale to update the status later?
+	wantStatusUpdate := scaledObject.Status.ScaleTargetKind != gvkString || scaledObject.Status.OriginalReplicaCount == nil
+
+	// check if we already know.
+	var scale *autoscalingv1.Scale
+	gr := gvkr.GroupResource()
+	isScalable := isScalableCache[gr.String()]
+	if !isScalable || wantStatusUpdate {
+		// not cached, let's try to detect /scale subresource
+		// also rechecks when we need to update the status.
+		var errScale error
+		scale, errScale = (*r.scaleClient).Scales(scaledObject.Namespace).Get(context.TODO(), gr, scaledObject.Spec.ScaleTargetRef.Name, metav1.GetOptions{})
+		if errScale != nil {
+			// not able to get /scale subresource -> let's check if the resource even exist in the cluster
+			unstruct := &unstructured.Unstructured{}
+			unstruct.SetGroupVersionKind(gvkr.GroupVersionKind())
+			if err := r.Client.Get(context.TODO(), client.ObjectKey{Namespace: scaledObject.Namespace, Name: scaledObject.Spec.ScaleTargetRef.Name}, unstruct); err != nil {
+				// resource doesn't exist
+				logger.Error(err, "Target resource doesn't exist", "resource", gvkString, "name", scaledObject.Spec.ScaleTargetRef.Name)
+				return gvkr, err
+			}
+			// resource exist but doesn't expose /scale subresource
+			logger.Error(errScale, "Target resource doesn't expose /scale subresource", "resource", gvkString, "name", scaledObject.Spec.ScaleTargetRef.Name)
+			return gvkr, errScale
 		}
-		// resource exist but doesn't expose /scale subresource
-		logger.Error(errScale, "Target resource doesn't expose /scale subresource", "resource", gvkString, "name", scaledObject.Spec.ScaleTargetRef.Name)
-		return gvkr, errScale
+		isScalableCache[gr.String()] = true
 	}
 
 	// if it is not already present in ScaledObject Status:
 	// - store discovered GVK and GVKR
 	// - store original scaleTarget's replica count (before scaling with KEDA)
-	if scaledObject.Status.ScaleTargetKind != gvkString || scaledObject.Status.OriginalReplicaCount == nil {
+	if wantStatusUpdate {
 		status := scaledObject.Status.DeepCopy()
 		if scaledObject.Status.ScaleTargetKind != gvkString {
 			status.ScaleTargetKind = gvkString

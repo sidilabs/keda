@@ -23,6 +23,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Go modules sync
+        run: go mod tidy
+
       - name: Verify Generated clientset is up to date
         run: make clientset-verify
 
@@ -37,13 +40,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v1
-      - uses: actions/setup-python@v2.1.4
+      - uses: actions/setup-python@v2.2.1
       - uses: actions/setup-go@v2
         with:
-          go-version: 1.15.5
+          go-version: 1.15.6
       - name: Get golangci
         run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.31.0
-      - uses: pre-commit/action@v1.0.1
+      - uses: pre-commit/action@v2.0.0
 
   codeScanning:
     name: Code Scanning

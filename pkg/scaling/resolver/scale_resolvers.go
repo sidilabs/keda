@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/ioutil"
+	"os"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -54,16 +56,15 @@ func ResolveAuthRef(client client.Client, logger logr.Logger, triggerAuthRef *ke
 	var podIdentity kedav1alpha1.PodIdentityProvider
 
 	if namespace != "" && triggerAuthRef != nil && triggerAuthRef.Name != "" {
-		triggerAuth := &kedav1alpha1.TriggerAuthentication{}
-		err := client.Get(context.TODO(), types.NamespacedName{Name: triggerAuthRef.Name, Namespace: namespace}, triggerAuth)
+		triggerAuthSpec, triggerNamespace, err := getTriggerAuthSpec(client, triggerAuthRef, namespace)
 		if err != nil {
 			logger.Error(err, "Error getting triggerAuth", "triggerAuthRef.Name", triggerAuthRef.Name)
 		} else {
-			if triggerAuth.Spec.PodIdentity != nil {
-				podIdentity = triggerAuth.Spec.PodIdentity.Provider
+			if triggerAuthSpec.PodIdentity != nil {
+				podIdentity = triggerAuthSpec.PodIdentity.Provider
 			}
-			if triggerAuth.Spec.Env != nil {
-				for _, e := range triggerAuth.Spec.Env {
+			if triggerAuthSpec.Env != nil {
+				for _, e := range triggerAuthSpec.Env {
 					if podSpec == nil {
 						result[e.Parameter] = ""
 						continue
@@ -76,18 +77,18 @@ func ResolveAuthRef(client client.Client, logger logr.Logger, triggerAuthRef *ke
 					}
 				}
 			}
-			if triggerAuth.Spec.SecretTargetRef != nil {
-				for _, e := range triggerAuth.Spec.SecretTargetRef {
-					result[e.Parameter] = resolveAuthSecret(client, logger, e.Name, namespace, e.Key)
+			if triggerAuthSpec.SecretTargetRef != nil {
+				for _, e := range triggerAuthSpec.SecretTargetRef {
+					result[e.Parameter] = resolveAuthSecret(client, logger, e.Name, triggerNamespace, e.Key)
 				}
 			}
-			if triggerAuth.Spec.HashiCorpVault != nil && len(triggerAuth.Spec.HashiCorpVault.Secrets) > 0 {
-				vault := NewHashicorpVaultHandler(triggerAuth.Spec.HashiCorpVault)
+			if triggerAuthSpec.HashiCorpVault != nil && len(triggerAuthSpec.HashiCorpVault.Secrets) > 0 {
+				vault := NewHashicorpVaultHandler(triggerAuthSpec.HashiCorpVault)
 				err := vault.Initialize(logger)
 				if err != nil {
 					logger.Error(err, "Error authenticate to Vault", "triggerAuthRef.Name", triggerAuthRef.Name)
 				} else {
-					for _, e := range triggerAuth.Spec.HashiCorpVault.Secrets {
+					for _, e := range triggerAuthSpec.HashiCorpVault.Secrets {
 						secret, err := vault.Read(e.Path)
 						if err != nil {
 							logger.Error(err, "Error trying to read secret from Vault", "triggerAuthRef.Name", triggerAuthRef.Name,
@@ -107,31 +108,79 @@ func ResolveAuthRef(client client.Client, logger logr.Logger, triggerAuthRef *ke
 	return result, podIdentity
 }
 
+var clusterObjectNamespaceCache *string
+
+func getClusterObjectNamespace() (string, error) {
+	// Check if a cached value is available.
+	if clusterObjectNamespaceCache != nil {
+		return *clusterObjectNamespaceCache, nil
+	}
+	env := os.Getenv("KEDA_CLUSTER_OBJECT_NAMESPACE")
+	if env != "" {
+		clusterObjectNamespaceCache = &env
+		return env, nil
+	}
+	data, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+	if err != nil {
+		return "", err
+	}
+	strData := string(data)
+	clusterObjectNamespaceCache = &strData
+	return strData, nil
+}
+
+func getTriggerAuthSpec(client client.Client, triggerAuthRef *kedav1alpha1.ScaledObjectAuthRef, namespace string) (*kedav1alpha1.TriggerAuthenticationSpec, string, error) {
+	if triggerAuthRef.Kind == "" || triggerAuthRef.Kind == "TriggerAuthentication" {
+		triggerAuth := &kedav1alpha1.TriggerAuthentication{}
+		err := client.Get(context.TODO(), types.NamespacedName{Name: triggerAuthRef.Name, Namespace: namespace}, triggerAuth)
+		if err != nil {
+			return nil, "", err
+		}
+		return &triggerAuth.Spec, namespace, nil
+	} else if triggerAuthRef.Kind == "ClusterTriggerAuthentication" {
+		clusterNamespace, err := getClusterObjectNamespace()
+		if err != nil {
+			return nil, "", err
+		}
+		triggerAuth := &kedav1alpha1.ClusterTriggerAuthentication{}
+		err = client.Get(context.TODO(), types.NamespacedName{Name: triggerAuthRef.Name}, triggerAuth)
+		if err != nil {
+			return nil, "", err
+		}
+		return &triggerAuth.Spec, clusterNamespace, nil
+	}
+	return nil, "", fmt.Errorf("unknown trigger auth kind %s", triggerAuthRef.Kind)
+}
+
 func resolveEnv(client client.Client, logger logr.Logger, container *corev1.Container, namespace string) (map[string]string, error) {
 	resolved := make(map[string]string)
 
 	if container.EnvFrom != nil {
 		for _, source := range container.EnvFrom {
 			if source.ConfigMapRef != nil {
-				if configMap, err := resolveConfigMap(client, source.ConfigMapRef, namespace); err == nil {
+				configMap, err := resolveConfigMap(client, source.ConfigMapRef, namespace)
+				switch {
+				case err == nil:
 					for k, v := range configMap {
 						resolved[k] = v
 					}
-				} else if source.ConfigMapRef.Optional != nil && *source.ConfigMapRef.Optional {
+				case source.ConfigMapRef.Optional != nil && *source.ConfigMapRef.Optional:
 					// ignore error when ConfigMap is marked as optional
 					continue
-				} else {
+				default:
 					return nil, fmt.Errorf("error reading config ref %s on namespace %s/: %s", source.ConfigMapRef, namespace, err)
 				}
 			} else if source.SecretRef != nil {
-				if secretsMap, err := resolveSecretMap(client, source.SecretRef, namespace); err == nil {
+				secretsMap, err := resolveSecretMap(client, source.SecretRef, namespace)
+				switch {
+				case err == nil:
 					for k, v := range secretsMap {
 						resolved[k] = v
 					}
-				} else if source.SecretRef.Optional != nil && *source.SecretRef.Optional {
+				case source.SecretRef.Optional != nil && *source.SecretRef.Optional:
 					// ignore error when Secret is marked as optional
 					continue
-				} else {
+				default:
 					return nil, fmt.Errorf("error reading secret ref %s on namespace %s: %s", source.SecretRef, namespace, err)
 				}
 			}
@@ -149,7 +198,8 @@ func resolveEnv(client client.Client, logger logr.Logger, container *corev1.Cont
 				value = resolveEnvValue(envVar.Value, resolved)
 			} else if envVar.ValueFrom != nil {
 				// env is an EnvVarSource, that can be on of the 4 below
-				if envVar.ValueFrom.SecretKeyRef != nil {
+				switch {
+				case envVar.ValueFrom.SecretKeyRef != nil:
 					// env is a secret selector
 					value, err = resolveSecretValue(client, envVar.ValueFrom.SecretKeyRef, envVar.ValueFrom.SecretKeyRef.Key, namespace)
 					if err != nil {
@@ -158,7 +208,7 @@ func resolveEnv(client client.Client, logger logr.Logger, container *corev1.Cont
 							envVar.Name,
 							namespace)
 					}
-				} else if envVar.ValueFrom.ConfigMapKeyRef != nil {
+				case envVar.ValueFrom.ConfigMapKeyRef != nil:
 					// env is a configMap selector
 					value, err = resolveConfigValue(client, envVar.ValueFrom.ConfigMapKeyRef, envVar.ValueFrom.ConfigMapKeyRef.Key, namespace)
 					if err != nil {
@@ -167,8 +217,8 @@ func resolveEnv(client client.Client, logger logr.Logger, container *corev1.Cont
 							envVar.Name,
 							namespace)
 					}
-				} else {
-					logger.V(1).Info("cannot resolve env %s to a value. fieldRef and resourceFieldRef env are skipped", envVar.Name)
+				default:
+					logger.V(1).Info("cannot resolve env to a value. fieldRef and resourceFieldRef env are skipped", "env-var-name", envVar.Name)
 					continue
 				}
 			}
@@ -219,7 +269,7 @@ func resolveEnvValue(value string, env map[string]string) string {
 			// append resolved env value into the buffer
 			buf.WriteString(content)
 			// make cursor continue scan
-			cursor = cursor + length
+			cursor += length
 			checkpoint = cursor + 1
 		}
 	}

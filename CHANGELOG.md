@@ -18,10 +18,29 @@
 
 ### New
 - Can use Pod Identity with Azure Event Hub scaler ([#994](https://github.com/kedacore/keda/issues/994))
+- Introducing InfluxDB scaler ([#1239](https://github.com/kedacore/keda/issues/1239))
+- Add Redis cluster support for Redis list and Redis streams scalers ([#1437](https://github.com/kedacore/keda/pull/1437))
+- Global authentication credentials can be managed using `ClusterTriggerAuthentication` objects ([#1452](https://github.com/kedacore/keda/pull/1452))
+- Introducing OpenStack Swift scaler ([#1342](https://github.com/kedacore/keda/issues/1342))
 
 ### Improvements
 - Support add ScaledJob's label to its job ([#1311](https://github.com/kedacore/keda/issues/1311))
-- Bug fix in aws_iam_authorization to utilize correct secret from env key name ([PR #1332](https://github.com/kedacore/keda/pull/1332))
+- Bug fix in aws_iam_authorization to utilize correct secret from env key name ([#1332](https://github.com/kedacore/keda/pull/1332))
+- Add metricName field to postgres scaler and auto generate if not defined ([#1381](https://github.com/kedacore/keda/pull/1381))
+- Mask password in postgres scaler auto generated metricName ([#1381](https://github.com/kedacore/keda/pull/1381))
+- Bug fix for pending jobs in ScaledJob's accurateScalingStrategy ([#1323](https://github.com/kedacore/keda/issues/1323))
+- Fix memory leak because of unclosed scalers ([#1413](https://github.com/kedacore/keda/issues/1413))
+- Override the vhost on a RabbitMQ scaler via `vhostName` in the metadata ([#1451](https://github.com/kedacore/keda/pull/1451))
+- Optimize Kafka scaler's `getLagForPartition` function ([#1464](https://github.com/kedacore/keda/pull/1464))
+- Reduce unnecessary /scale requests from ScaledObject controller ([#1453](https://github.com/kedacore/keda/pull/1453))
+- Add support for the `WATCH_NAMESPACE` environment variable to the operator ([#1474](https://github.com/kedacore/keda/pull/1474))
+- Automatically determine the RabbitMQ protocol when possible, and support setting the protocl via TriggerAuthentication ([#1459](https://github.com/kedacore/keda/pulls/1459), [#1483](https://github.com/kedacore/keda/pull/1483))
+- Improve performance when fetching pod information ([#1457](https://github.com/kedacore/keda/pull/1457))
+- Improve performance when fetching current scaling information on Deployments ([#1458](https://github.com/kedacore/keda/pull/1458))
+- Improve error reporting in prometheus scaler ([#1497](https://github.com/kedacore/keda/pull/1497))
+- Check that metricNames are unique in ScaledObject ([#1390](https://github.com/kedacore/keda/pull/1390))
+- Serve OpenAPI spec from KEDA Metrics Apiserver ([#1512](https://github.com/kedacore/keda/pull/1512))
+- Support metrics with multiple dimensions and configurable metricValues on AWS Cloudwatch Scaler ([#1230](https://github.com/kedacore/keda/issues/1230))
 
 ### Breaking Changes
 
@@ -32,6 +51,7 @@
 
 ### New
 
+- KEDA uses a dedicated [HTTP client](https://pkg.go.dev/net/http#Client), connection pool, and (optional) TLS certificate for each configured scaler
 - KEDA scales any CustomResource that implements Scale subresource ([#703](https://github.com/kedacore/keda/issues/703))
 - Provide KEDA go-client ([#494](https://github.com/kedacore/keda/issues/494))
 - Define KEDA readiness and liveness probes ([#788](https://github.com/kedacore/keda/issues/788))

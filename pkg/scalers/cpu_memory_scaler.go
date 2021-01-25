@@ -58,7 +58,7 @@ func parseResourceMetadata(config *ScalerConfig) (*cpuMemoryMetadata, error) {
 		averageValueQuantity := resource.MustParse(value)
 		meta.AverageValue = &averageValueQuantity
 	case v2beta2.UtilizationMetricType:
-		valueNum, err := strconv.Atoi(value)
+		valueNum, err := strconv.ParseInt(value, 10, 32)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (s *cpuMemoryScaler) IsActive(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-//Close no need for cpuMemory scaler
+// Close no need for cpuMemory scaler
 func (s *cpuMemoryScaler) Close() error {
 	return nil
 }

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 
 	"github.com/streadway/amqp"
 	v2beta2 "k8s.io/api/autoscaling/v2beta2"
@@ -30,20 +29,23 @@ const (
 const (
 	httpProtocol    = "http"
 	amqpProtocol    = "amqp"
-	defaultProtocol = amqpProtocol
+	autoProtocol    = "auto"
+	defaultProtocol = autoProtocol
 )
 
 type rabbitMQScaler struct {
 	metadata   *rabbitMQMetadata
 	connection *amqp.Connection
 	channel    *amqp.Channel
+	httpClient *http.Client
 }
 
 type rabbitMQMetadata struct {
 	queueName   string
 	queueLength int
-	host        string // connection string for either HTTP or AMQP protocol
-	protocol    string // either http or amqp protocol
+	host        string  // connection string for either HTTP or AMQP protocol
+	protocol    string  // either http or amqp protocol
+	vhostName   *string // override the vhost from the connection info
 }
 
 type queueInfo struct {
@@ -56,16 +58,31 @@ var rabbitmqLog = logf.Log.WithName("rabbitmq_scaler")
 
 // NewRabbitMQScaler creates a new rabbitMQ scaler
 func NewRabbitMQScaler(config *ScalerConfig) (Scaler, error) {
+	httpClient := kedautil.CreateHTTPClient(config.GlobalHTTPTimeout)
 	meta, err := parseRabbitMQMetadata(config)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing rabbitmq metadata: %s", err)
 	}
 
 	if meta.protocol == httpProtocol {
-		return &rabbitMQScaler{metadata: meta}, nil
+		return &rabbitMQScaler{
+			metadata:   meta,
+			httpClient: httpClient,
+		}, nil
 	}
 
-	conn, ch, err := getConnectionAndChannel(meta.host)
+	// Override vhost if requested.
+	host := meta.host
+	if meta.vhostName != nil {
+		hostURI, err := amqp.ParseURI(host)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing rabbitmq connection string: %s", err)
+		}
+		hostURI.Vhost = *meta.vhostName
+		host = hostURI.String()
+	}
+
+	conn, ch, err := getConnectionAndChannel(host)
 	if err != nil {
 		return nil, fmt.Errorf("error establishing rabbitmq connection: %s", err)
 	}
@@ -74,6 +91,7 @@ func NewRabbitMQScaler(config *ScalerConfig) (Scaler, error) {
 		metadata:   meta,
 		connection: conn,
 		channel:    ch,
+		httpClient: httpClient,
 	}, nil
 }
 
@@ -82,23 +100,42 @@ func parseRabbitMQMetadata(config *ScalerConfig) (*rabbitMQMetadata, error) {
 
 	// Resolve protocol type
 	meta.protocol = defaultProtocol
+	if val, ok := config.AuthParams["protocol"]; ok {
+		meta.protocol = val
+	}
 	if val, ok := config.TriggerMetadata["protocol"]; ok {
-		if val == amqpProtocol || val == httpProtocol {
-			meta.protocol = val
-		} else {
-			return nil, fmt.Errorf("the protocol has to be either `%s` or `%s` but is `%s`", amqpProtocol, httpProtocol, val)
-		}
+		meta.protocol = val
+	}
+	if meta.protocol != amqpProtocol && meta.protocol != httpProtocol && meta.protocol != autoProtocol {
+		return nil, fmt.Errorf("the protocol has to be either `%s`, `%s`, or `%s` but is `%s`", amqpProtocol, httpProtocol, autoProtocol, meta.protocol)
 	}
 
 	// Resolve host value
-	if config.AuthParams["host"] != "" {
+	switch {
+	case config.AuthParams["host"] != "":
 		meta.host = config.AuthParams["host"]
-	} else if config.TriggerMetadata["host"] != "" {
+	case config.TriggerMetadata["host"] != "":
 		meta.host = config.TriggerMetadata["host"]
-	} else if config.TriggerMetadata["hostFromEnv"] != "" {
+	case config.TriggerMetadata["hostFromEnv"] != "":
 		meta.host = config.ResolvedEnv[config.TriggerMetadata["hostFromEnv"]]
-	} else {
+	default:
 		return nil, fmt.Errorf("no host setting given")
+	}
+
+	// If the protocol is auto, check the host scheme.
+	if meta.protocol == autoProtocol {
+		parsedURL, err := url.Parse(meta.host)
+		if err != nil {
+			return nil, fmt.Errorf("can't parse host to find protocol: %s", err)
+		}
+		switch parsedURL.Scheme {
+		case "amqp", "amqps":
+			meta.protocol = amqpProtocol
+		case "http", "https":
+			meta.protocol = httpProtocol
+		default:
+			return nil, fmt.Errorf("unknown host URL scheme `%s`", parsedURL.Scheme)
+		}
 	}
 
 	// Resolve queueName
@@ -118,6 +155,11 @@ func parseRabbitMQMetadata(config *ScalerConfig) (*rabbitMQMetadata, error) {
 		meta.queueLength = queueLength
 	} else {
 		meta.queueLength = defaultRabbitMQQueueLength
+	}
+
+	// Resolve vhostName
+	if val, ok := config.TriggerMetadata["vhostName"]; ok {
+		meta.vhostName = &val
 	}
 
 	return &meta, nil
@@ -178,9 +220,8 @@ func (s *rabbitMQScaler) getQueueMessages() (int, error) {
 	return items.Messages, nil
 }
 
-func getJSON(url string, target interface{}) error {
-	var client = &http.Client{Timeout: 5 * time.Second}
-	r, err := client.Get(url)
+func getJSON(httpClient *http.Client, url string, target interface{}) error {
+	r, err := httpClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -203,6 +244,11 @@ func (s *rabbitMQScaler) getQueueInfoViaHTTP() (*queueInfo, error) {
 
 	vhost := parsedURL.Path
 
+	// Override vhost if requested.
+	if s.metadata.vhostName != nil {
+		vhost = "/" + *s.metadata.vhostName
+	}
+
 	if vhost == "" || vhost == "/" || vhost == "//" {
 		vhost = "/%2F"
 	}
@@ -212,7 +258,7 @@ func (s *rabbitMQScaler) getQueueInfoViaHTTP() (*queueInfo, error) {
 	getQueueInfoManagementURI := fmt.Sprintf("%s/%s%s/%s", parsedURL.String(), "api/queues", vhost, s.metadata.queueName)
 
 	info := queueInfo{}
-	err = getJSON(getQueueInfoManagementURI, &info)
+	err = getJSON(s.httpClient, getQueueInfoManagementURI, &info)
 
 	if err != nil {
 		return nil, err
