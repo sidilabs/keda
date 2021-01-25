@@ -22,11 +22,8 @@ import (
 )
 
 const (
-	defautAodhThreholdAlarmQty = 1
-	defaultValueWhenError      = 0
-	aodhInsufficientDataState  = "insufficient data"
-	aodhOKState                = "ok"
-	aodhAlarmState             = "alarm"
+	defaultValueWhenError        = 0
+	aodhDefaultHTTPClientTimeout = 30
 )
 
 /* expected structure declarations */
@@ -37,6 +34,7 @@ type aodhMetadata struct {
 	aggregationMethod string
 	granularity       int
 	threshold         float64
+	httpClientTimeout int
 }
 
 type aodhAuthenticationMetadata struct {
@@ -62,7 +60,7 @@ var aodhLog = logf.Log.WithName("aodh_scaler")
 
 // NewOpenstackAodhScaler creates new AODH openstack scaler instance
 func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
-	// openstackAuth := new(openstack.KeystoneAuthMetadata)
+	//openstackAuth := new(openstack.KeystoneAuthMetadata)
 	var keystoneAuth *openstack.KeystoneAuthMetadata
 
 	aodhMetadata, err := parseAodhMetadata(config.TriggerMetadata)
@@ -79,7 +77,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 
 	// User choose the "application_credentials" authentication method
 	if authMetadata.appCredentialSecretID != "" {
-		keystoneAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret)
+		keystoneAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret, aodhMetadata.httpClientTimeout)
 
 		if err != nil {
 			return nil, fmt.Errorf("error getting openstack credentials for application credentials method: %s", err)
@@ -88,7 +86,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 	} else {
 		// User choose the "password" authentication method
 		if authMetadata.userID != "" {
-			keystoneAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "")
+			keystoneAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "", aodhMetadata.httpClientTimeout)
 
 			if err != nil {
 				return nil, fmt.Errorf("error getting openstack credentials for password method: %s", err)
@@ -282,7 +280,7 @@ func (a *aodhScaler) getAlarmsMetric() (float64, error) {
 	}
 	aodhRequest.Header.Set("X-Auth-Token", token)
 
-	resp, requestError := a.authMetadata.HttpClient.Do(aodhRequest)
+	resp, requestError := a.authMetadata.HTTPClient.Do(aodhRequest)
 
 	if requestError != nil {
 		aodhLog.Error(requestError, "Unable to request Metrics from URL: %s.", a.metadata.metricsURL)
