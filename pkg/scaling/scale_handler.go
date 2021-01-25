@@ -478,6 +478,8 @@ func buildScaler(triggerType string, config *scalers.ScalerConfig) (scalers.Scal
 		return scalers.NewMongoDBScaler(config)
 	case "mysql":
 		return scalers.NewMySQLScaler(config)
+	case "openstack-aodh":
+		return scalers.NewOpenstackAodhScaler(config)
 	case "openstack-swift":
 		return scalers.NewOpenstackSwiftScaler(config)
 	case "postgresql":
@@ -496,8 +498,6 @@ func buildScaler(triggerType string, config *scalers.ScalerConfig) (scalers.Scal
 		return scalers.NewRedisStreamsScaler(false, config)
 	case "stan":
 		return scalers.NewStanScaler(config)
-	case "openstack-aodh":
-		return scalers.NewOpenstackAodhScaler(config)
 	default:
 		return nil, fmt.Errorf("no scaler found for type: %s", triggerType)
 	}
