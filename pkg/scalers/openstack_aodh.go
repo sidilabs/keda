@@ -49,7 +49,7 @@ type aodhAuthenticationMetadata struct {
 
 type aodhScaler struct {
 	metadata     *aodhMetadata
-	authMetadata *openstack.OpenStackAuthMetadata
+	authMetadata *openstack.KeystoneAuthMetadata
 }
 
 type measureResult struct {
@@ -62,7 +62,8 @@ var aodhLog = logf.Log.WithName("aodh_scaler")
 
 // NewOpenstackAodhScaler creates new AODH openstack scaler instance
 func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
-	openstackAuth := new(openstack.OpenStackAuthMetadata)
+	// openstackAuth := new(openstack.KeystoneAuthMetadata)
+	var keystoneAuth *openstack.KeystoneAuthMetadata
 
 	aodhMetadata, err := parseAodhMetadata(config.TriggerMetadata)
 
@@ -78,7 +79,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 
 	// User choose the "application_credentials" authentication method
 	if authMetadata.appCredentialSecretID != "" {
-		openstackAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret)
+		keystoneAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret)
 
 		if err != nil {
 			return nil, fmt.Errorf("error getting openstack credentials for application credentials method: %s", err)
@@ -87,7 +88,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 	} else {
 		// User choose the "password" authentication method
 		if authMetadata.userID != "" {
-			openstackAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "")
+			keystoneAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "")
 
 			if err != nil {
 				return nil, fmt.Errorf("error getting openstack credentials for password method: %s", err)
@@ -99,7 +100,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 
 	return &aodhScaler{
 		metadata:     aodhMetadata,
-		authMetadata: openstackAuth,
+		authMetadata: keystoneAuth,
 	}, nil
 }
 
