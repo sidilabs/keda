@@ -34,7 +34,7 @@ type aodhMetadata struct {
 	aggregationMethod string
 	granularity       int
 	threshold         float64
-	httpClientTimeout int
+	timeout           int
 }
 
 type aodhAuthenticationMetadata struct {
@@ -77,7 +77,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 
 	// User choose the "application_credentials" authentication method
 	if authMetadata.appCredentialSecretID != "" {
-		keystoneAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret, aodhMetadata.httpClientTimeout)
+		keystoneAuth, err = openstack.NewAppCredentialsAuth(authMetadata.authURL, authMetadata.appCredentialSecretID, authMetadata.appCredentialSecret, aodhMetadata.timeout)
 
 		if err != nil {
 			return nil, fmt.Errorf("error getting openstack credentials for application credentials method: %s", err)
@@ -86,7 +86,7 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 	} else {
 		// User choose the "password" authentication method
 		if authMetadata.userID != "" {
-			keystoneAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "", aodhMetadata.httpClientTimeout)
+			keystoneAuth, err = openstack.NewPasswordAuth(authMetadata.authURL, authMetadata.userID, authMetadata.password, "", aodhMetadata.timeout)
 
 			if err != nil {
 				return nil, fmt.Errorf("error getting openstack credentials for password method: %s", err)
@@ -108,23 +108,31 @@ func parseAodhMetadata(triggerMetadata map[string]string) (*aodhMetadata, error)
 	if val, ok := triggerMetadata["metricsURL"]; ok && val != "" {
 		meta.metricsURL = val
 	} else {
+		aodhLog.Error(fmt.Errorf("No metricsURL could be read"), "Error readig metricsURL")
 		return nil, fmt.Errorf("No metricsURL was declared")
 	}
 
 	if val, ok := triggerMetadata["metricID"]; ok && val != "" {
 		meta.metricID = val
 	} else {
+		aodhLog.Error(fmt.Errorf("No metricID could be read"), "Error reading metricID")
 		return nil, fmt.Errorf("No metricID was declared")
 	}
 
 	if val, ok := triggerMetadata["aggregationMethod"]; ok && val != "" {
-		meta.metricID = val
+		meta.aggregationMethod = val
 	} else {
-		return nil, fmt.Errorf("No aggregationMethod found")
+		aodhLog.Error(fmt.Errorf("No aggregationMethod could be read"), "Error reading aggregation method")
+		return nil, fmt.Errorf("No aggregationMethod could be read")
 	}
 
 	if val, ok := triggerMetadata["granularity"]; ok && val != "" {
-		meta.metricID = val
+		if granularity, err := strconv.Atoi(val); err != nil {
+			aodhLog.Error(err, "Error converting granulality information")
+			return nil, err
+		} else {
+			meta.granularity = granularity
+		}
 	} else {
 		return nil, fmt.Errorf("No granularity found")
 	}
@@ -197,7 +205,7 @@ func (a *aodhScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 }
 
 func (a *aodhScaler) GetMetrics(ctx context.Context, metricName string, metricSelector labels.Selector) ([]external_metrics.ExternalMetricValue, error) {
-	val, err := a.getAlarmsMetric()
+	val, err := a.readOpenstackMetrics()
 
 	if err != nil {
 		aodhLog.Error(err, "Error collecting metric value")
@@ -214,7 +222,7 @@ func (a *aodhScaler) GetMetrics(ctx context.Context, metricName string, metricSe
 }
 
 func (a *aodhScaler) IsActive(ctx context.Context) (bool, error) {
-	val, err := a.getAlarmsMetric()
+	val, err := a.readOpenstackMetrics()
 
 	if err != nil {
 		return false, err
@@ -228,7 +236,7 @@ func (a *aodhScaler) Close() error {
 }
 
 // Gets measureament from API as float64, converts it to int and return the value.
-func (a *aodhScaler) getAlarmsMetric() (float64, error) {
+func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 
 	var token string = ""
 	var metricURL string = a.metadata.metricsURL
