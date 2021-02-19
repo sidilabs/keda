@@ -63,13 +63,13 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 	//openstackAuth := new(openstack.KeystoneAuthMetadata)
 	var keystoneAuth *openstack.KeystoneAuthMetadata
 
-	aodhMetadata, err := parseAodhMetadata(config.TriggerMetadata)
+	aodhMetadata, err := parseAodhMetadata(config)
 
 	if err != nil {
 		return nil, fmt.Errorf("error parsing AODH metadata: %s", err)
 	}
 
-	authMetadata, err := parseAodhAuthenticationMetadata(config.AuthParams)
+	authMetadata, err := parseAodhAuthenticationMetadata(config)
 
 	if err != nil {
 		return nil, fmt.Errorf("error parsing AODH authentication metadata: %s", err)
@@ -102,8 +102,9 @@ func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
 	}, nil
 }
 
-func parseAodhMetadata(triggerMetadata map[string]string) (*aodhMetadata, error) {
+func parseAodhMetadata(config *ScalerConfig) (*aodhMetadata, error) {
 	meta := aodhMetadata{}
+	triggerMetadata := config.TriggerMetadata
 
 	if val, ok := triggerMetadata["metricsURL"]; ok && val != "" {
 		meta.metricsURL = val
@@ -128,11 +129,14 @@ func parseAodhMetadata(triggerMetadata map[string]string) (*aodhMetadata, error)
 
 	if val, ok := triggerMetadata["granularity"]; ok && val != "" {
 		if granularity, err := strconv.Atoi(val); err != nil {
-			aodhLog.Error(err, "Error converting granulality information")
-			return nil, err
-		} else {
+			if err != nil {
+				aodhLog.Error(err, "Error converting granulality information %s", err.Error)
+				return nil, err
+			}
+
 			meta.granularity = granularity
 		}
+
 	} else {
 		return nil, fmt.Errorf("No granularity found")
 	}
@@ -151,8 +155,9 @@ func parseAodhMetadata(triggerMetadata map[string]string) (*aodhMetadata, error)
 	return &meta, nil
 }
 
-func parseAodhAuthenticationMetadata(authParams map[string]string) (aodhAuthenticationMetadata, error) {
+func parseAodhAuthenticationMetadata(config *ScalerConfig) (aodhAuthenticationMetadata, error) {
 	authMeta := aodhAuthenticationMetadata{}
+	authParams := config.AuthParams
 
 	if val, ok := authParams["authURL"]; ok && val != "" {
 		authMeta.authURL = authParams["authURL"]
@@ -183,12 +188,13 @@ func parseAodhAuthenticationMetadata(authParams map[string]string) (aodhAuthenti
 	return authMeta, nil
 }
 
-// TODO: improve Normalize string arguments (line 151)
+//TODO: improve Normalize string arguments (line 196)
 func (a *aodhScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	targetMetricVal := resource.NewQuantity(int64(a.metadata.threshold), resource.DecimalSI)
 	externalMetric := &v2beta2.ExternalMetricSource{
 		Metric: v2beta2.MetricIdentifier{
-			Name: kedautil.NormalizeString(fmt.Sprintf("%s-%s", "openstack-AODH", a.authMetadata.AuthURL)),
+			//aux1, err := fmt.Sprintf("%s-%s", "openstack-AODH", a.authMetadata.AuthURL)
+			Name: kedautil.NormalizeString(fmt.Sprintf("openstack-aodh-%s", a.metadata.aggregationMethod)),
 		},
 		Target: v2beta2.MetricTarget{
 			Type:         v2beta2.AverageValueMetricType,
@@ -270,6 +276,12 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID+"/measures")
 	queryParameter := aodhAlarmURL.Query()
 	granularity := 2
+
+	if a.metadata.granularity <= 0 {
+		aodhLog.Error(fmt.Errorf("Granularity Value is less than 1"), "Minimum accepatble value expected for ganularity is 1.")
+		return defaultValueWhenError, fmt.Errorf("Granularity Value is less than 1")
+	}
+
 	if a.metadata.granularity > 1 {
 		granularity = a.metadata.granularity - 1
 	}
