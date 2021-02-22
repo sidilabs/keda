@@ -19,6 +19,9 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
+    - jsonPath: .spec.maxReplicaCount
+      name: Max
+      type: integer
     - jsonPath: .spec.triggers[*].type
       name: Triggers
       type: string
