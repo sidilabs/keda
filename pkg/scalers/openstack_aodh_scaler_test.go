@@ -34,6 +34,7 @@ var openstackAodhAuthMetadataTestData = []parseOpenstackAodhAuthMetadatesData{
 }
 
 var invalidOpenstackAodhMetadaTestData = []parseOpenstackAodhMetadataTestData{
+
 	// Missing metrics url
 	{metadata: map[string]string{"metricID": "003bb589-166d-439d-8c31-cbf098d863de", "aggregationMethod": "mean", "granularity": "300", "threshold": "1250"}},
 
@@ -54,6 +55,12 @@ var invalidOpenstackAodhMetadaTestData = []parseOpenstackAodhMetadataTestData{
 
 	//Missing threshold
 	{metadata: map[string]string{"metricsUrl": "http://localhost:8041/v1/metric", "metricID": "003bb589-166d-439d-8c31-cbf098d863de", "aggregationMethod": "mean", "granularity": "300", "timeout": "30"}},
+
+	//granularity 0
+	{metadata: map[string]string{"metricsURL": "http://localhost:8041/v1/metric", "metricID": "003bb589-166d-439d-8c31-cbf098d863de", "aggregationMethod": "mean", "granularity": "avc", "threshold": "1250"}},
+
+	//threshold 0
+	{metadata: map[string]string{"metricsURL": "http://localhost:8041/v1/metric", "metricID": "003bb589-166d-439d-8c31-cbf098d863de", "aggregationMethod": "mean", "granularity": "300", "threshold": "0z"}},
 }
 
 var invalidOpenstackAodhAuthMetadataTestData = []parseOpenstackAodhAuthMetadatesData{
@@ -120,6 +127,8 @@ func TestOpenstackMetricsGetMetricsForSpecScalingInvalidMetaData(t *testing.T) {
 		{nil, &invalidOpenstackAodhMetadaTestData[4], &openstackAodhAuthMetadataTestData[0], "Missing aggregation method"},
 		{nil, &invalidOpenstackAodhMetadaTestData[5], &openstackAodhAuthMetadataTestData[0], "Missing granularity"},
 		{nil, &invalidOpenstackAodhMetadaTestData[6], &openstackAodhAuthMetadataTestData[0], "Missing threshold"},
+		{nil, &invalidOpenstackAodhMetadaTestData[7], &openstackAodhAuthMetadataTestData[0], "Missing threshold"},
+		{nil, &invalidOpenstackAodhMetadaTestData[8], &openstackAodhAuthMetadataTestData[0], "Missing threshold"},
 	}
 
 	for _, testData := range testCases {
