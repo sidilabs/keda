@@ -21,6 +21,7 @@
 
 - TODO ([#XXX](https://github.com/kedacore/keda/issues/XXX))
 - Emit Kubernetes Events on KEDA events ([#1523](https://github.com/kedacore/keda/pull/1523))
+- Add Microsoft SQL Server (MSSQL) scaler ([#674](https://github.com/kedacore/keda/issues/674) | [docs](https://keda.sh/docs/2.2/scalers/mssql/))
 
 ### Improvements
 
@@ -29,6 +30,7 @@
 - Add container port for Prometheus on operator YAML ([#1562](https://github.com/kedacore/keda/pull/1562))
 - Fix a memory leak in kafka client and close push scalers ([#1565](https://github.com/kedacore/keda/issues/1565))
 - Add 'Metadata' header to AAD podIdentity request ([#1566](https://github.com/kedacore/keda/issues/1566))
+- KEDA should make sure generate correct labels for HPA ([#1630](https://github.com/kedacore/keda/issues/1630))
 
 ### Breaking Changes
 
@@ -45,7 +47,7 @@
 - Can use Pod Identity with Azure Event Hub scaler ([#994](https://github.com/kedacore/keda/issues/994))
 - Introducing InfluxDB scaler ([#1239](https://github.com/kedacore/keda/issues/1239))
 - Add Redis cluster support for Redis list and Redis streams scalers ([#1437](https://github.com/kedacore/keda/pull/1437))
-- Global authentication credentials can be managed using ClusterTriggerAuthentication objects ([#1452](https://github.com/kedacore/keda/pull/1452))
+- Global authentication credentials can be managed using `ClusterTriggerAuthentication` objects ([#1452](https://github.com/kedacore/keda/pull/1452))
 - Introducing OpenStack Swift scaler ([#1342](https://github.com/kedacore/keda/issues/1342))
 - Introducing MongoDB scaler ([#1467](https://github.com/kedacore/keda/pull/1467))
 
