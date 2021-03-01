@@ -135,6 +135,7 @@ func parseAodhMetadata(config *ScalerConfig) (*aodhMetadata, error) {
 			}
 
 			meta.granularity = granularity
+
 		}
 
 	} else {
@@ -188,7 +189,6 @@ func parseAodhAuthenticationMetadata(config *ScalerConfig) (aodhAuthenticationMe
 	return authMeta, nil
 }
 
-//TODO: improve Normalize string arguments (line 196)
 func (a *aodhScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	targetMetricVal := resource.NewQuantity(int64(a.metadata.threshold), resource.DecimalSI)
 	externalMetric := &v2beta2.ExternalMetricSource{
@@ -266,15 +266,15 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 
 	token = a.authMetadata.AuthToken
 
-	aodhAlarmURL, err := url.Parse(metricURL)
+	aodhMetricsURL, err := url.Parse(metricURL)
 
 	if err != nil {
 		aodhLog.Error(err, "The metrics URL provided is invalid")
 		return defaultValueWhenError, fmt.Errorf("The metrics URL is invalid: %s", err.Error())
 	}
 
-	aodhAlarmURL.Path = path.Join(aodhAlarmURL.Path, a.metadata.metricID+"/measures")
-	queryParameter := aodhAlarmURL.Query()
+	aodhMetricsURL.Path = path.Join(aodhMetricsURL.Path, a.metadata.metricID+"/measures")
+	queryParameter := aodhMetricsURL.Query()
 	granularity := 2
 
 	if a.metadata.granularity <= 0 {
@@ -282,8 +282,8 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 		return defaultValueWhenError, fmt.Errorf("Granularity Value is less than 1")
 	}
 
-	if a.metadata.granularity > 1 {
-		granularity = a.metadata.granularity - 1
+	if (a.metadata.granularity / 60) > 1 {
+		granularity = (a.metadata.granularity / 60) - 1
 	}
 
 	queryParameter.Set("granularity", strconv.Itoa(a.metadata.granularity))
@@ -292,9 +292,9 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 	currTimeWithWindow := time.Now().Add(time.Minute + time.Duration(granularity)).Format(time.RFC3339)
 	queryParameter.Set("start", string(currTimeWithWindow)[:17]+"00")
 
-	aodhAlarmURL.RawQuery = queryParameter.Encode()
+	aodhMetricsURL.RawQuery = queryParameter.Encode()
 
-	aodhRequest, newReqErr := http.NewRequest("GET", aodhAlarmURL.String(), nil)
+	aodhRequest, newReqErr := http.NewRequest("GET", aodhMetricsURL.String(), nil)
 	if newReqErr != nil {
 		aodhLog.Error(newReqErr, "Could not build metrics request", nil)
 	}
