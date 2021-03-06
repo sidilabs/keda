@@ -283,8 +283,10 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 	}
 
 	if (a.metadata.granularity / 60) > 1 {
-		granularity = (a.metadata.granularity / 60) - 1
+		granularity = (a.metadata.granularity / 60)
 	}
+
+	granularity--
 
 	queryParameter.Set("granularity", strconv.Itoa(a.metadata.granularity))
 	queryParameter.Set("aggregation", a.metadata.aggregationMethod)
