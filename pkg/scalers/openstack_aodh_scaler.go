@@ -60,7 +60,6 @@ var aodhLog = logf.Log.WithName("aodh_scaler")
 
 // NewOpenstackAodhScaler creates new AODH openstack scaler instance
 func NewOpenstackAodhScaler(config *ScalerConfig) (Scaler, error) {
-	//openstackAuth := new(openstack.KeystoneAuthMetadata)
 	var keystoneAuth *openstack.KeystoneAuthMetadata
 
 	aodhMetadata, err := parseAodhMetadata(config)
@@ -275,7 +274,7 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 
 	aodhMetricsURL.Path = path.Join(aodhMetricsURL.Path, a.metadata.metricID+"/measures")
 	queryParameter := aodhMetricsURL.Query()
-	granularity := 2
+	granularity := 2 // We start with granularity with value 2 cause gnocchi APIm which is used by openstack, consider a time window, and we want to get the last value
 
 	if a.metadata.granularity <= 0 {
 		aodhLog.Error(fmt.Errorf("Granularity Value is less than 1"), "Minimum accepatble value expected for ganularity is 1.")
