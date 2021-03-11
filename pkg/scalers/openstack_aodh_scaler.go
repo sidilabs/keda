@@ -274,7 +274,11 @@ func (a *aodhScaler) readOpenstackMetrics() (float64, error) {
 
 	aodhMetricsURL.Path = path.Join(aodhMetricsURL.Path, a.metadata.metricID+"/measures")
 	queryParameter := aodhMetricsURL.Query()
+<<<<<<< HEAD
 	granularity := 2 // We start with granularity with value 2 cause gnocchi APIm which is used by openstack, consider a time window, and we want to get the last value
+=======
+	granularity := 2
+>>>>>>> abf20a8d4fbb96f1b21ed533be10e611a6fa207b
 
 	if a.metadata.granularity <= 0 {
 		aodhLog.Error(fmt.Errorf("Granularity Value is less than 1"), "Minimum accepatble value expected for ganularity is 1.")
