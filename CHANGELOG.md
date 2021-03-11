@@ -31,6 +31,12 @@
 - Fix a memory leak in kafka client and close push scalers ([#1565](https://github.com/kedacore/keda/issues/1565))
 - Add 'Metadata' header to AAD podIdentity request ([#1566](https://github.com/kedacore/keda/issues/1566))
 - KEDA should make sure generate correct labels for HPA ([#1630](https://github.com/kedacore/keda/issues/1630))
+- Fix memory leak by checking triggers uniqueness properly ([#1640](https://github.com/kedacore/keda/pull/1640))
+- Print correct ScaleTarget Kind in Events ([#1641](https://github.com/kedacore/keda/pull/1641))
+- Fixed keda clusterroles to give permissions for clustertriggerauthentications ([#1645](https://github.com/kedacore/keda/pull/1645))
+- Make `swiftURL` parameter optional for the OpenStack Swift scaler ([#1652](https://github.com/kedacore/keda/pull/1652))
+- Fix memory leak of `keda-metrics-apiserver` by setting a controller-runtime logger properly ([#1654](https://github.com/kedacore/keda/pull/1654))
+- Add `publishRate` trigger to RabbitMQ scaler ([#1653](https://github.com/kedacore/keda/pull/1653))
 
 ### Breaking Changes
 
